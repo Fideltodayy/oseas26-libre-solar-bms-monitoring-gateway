@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 
 import paho.mqtt.client as mqtt
 
-from bms_gateway import __version__, contract
+from bms_gateway import __version__, contract, ha_discovery
 
 # Firmware LFP OCV table (bms_common.c), SoC from 100 % down to 0 % in 5 % steps.
 OCV_LFP = (
@@ -82,6 +82,24 @@ class Limits:
         }
 
 
+SCENARIOS = {
+    "normal": "Healthy battery on a solar day",
+    "overheat": "Enclosure heats up to 52 °C: health warning first, then the BMS stops charging and discharging",
+    "cold": "Freezing night (-5 °C): the BMS blocks charging",
+    "cell_drift": "One cell drifts away from the others: imbalance warning, then critical",
+    "overload": "Load above 1C: the BMS switches the output off",
+    "deep_discharge": "Inverter low-voltage cut-off fails and the battery runs flat: the BMS stops discharging",
+    "silent": "BMS stops sending data while the link stays up (e.g. UART cable unplugged)",
+}
+
+AMBIENT_C = {"overheat": 52.0, "cold": -5.0}
+THERMAL_TIME_CONSTANT_S = 1800.0
+DRIFT_V_PER_HOUR = 0.02
+
+CHG_BLOCKING = {"CELL_OVERVOLTAGE", "CHG_OVERCURRENT", "CHG_OVERTEMP", "CHG_UNDERTEMP"}
+DIS_BLOCKING = {"CELL_UNDERVOLTAGE", "DIS_OVERCURRENT", "SHORT_CIRCUIT", "DIS_OVERTEMP", "DIS_UNDERTEMP"}
+
+
 @dataclass
 class BatteryModel:
     cells: int = 16
@@ -91,36 +109,74 @@ class BatteryModel:
     hour: float = 8.0  # simulated time of day
     seed: int | None = None
     cell_resistance_ohm: float = 0.0008
-    current_a: float = 0.0
+    current_a: float = 0.0  # what flows, after the BMS switches
+    demand_a: float = 0.0  # what charger and loads ask for
+    scenario: str = "normal"
+    errors: set = field(default_factory=set)  # latched until their reset threshold
 
     def __post_init__(self):
         self.rng = random.Random(self.seed)
         # Manufacturing spread of a few mV, plus one slightly weak cell.
-        self.cell_offsets = [self.rng.uniform(-0.004, 0.004) for _ in range(self.cells)]
-        self.cell_offsets[self.rng.randrange(self.cells)] -= 0.008
+        self.base_offsets = [self.rng.uniform(-0.004, 0.004) for _ in range(self.cells)]
+        self.weak_cell = self.rng.randrange(self.cells)
+        self.base_offsets[self.weak_cell] -= 0.008
+        self.cell_offsets = list(self.base_offsets)
+
+    def set_scenario(self, name: str) -> None:
+        if name not in SCENARIOS:
+            raise ValueError(f"Unknown scenario {name!r}, choose from {', '.join(SCENARIOS)}")
+        self.scenario = name
+        if name == "normal":
+            self.cell_offsets = list(self.base_offsets)
+        elif name == "deep_discharge":
+            self.soc_pct = min(self.soc_pct, 3.5)
 
     def _demand_current(self) -> float:
-        """Solar charging between 06:00 and 18:00 minus the household load."""
+        """Solar charging between 06:00 and 18:00 minus the household load.
+
+        Sized like a typical installation: 0.25 C peak solar and 0.05 C average
+        load (1.3 kW PV and ~250 W load on a 48 V 100 Ah pack), so a sunny day
+        refills what the night takes.
+        """
         solar = 0.0
         if 6.0 <= self.hour <= 18.0:
-            solar = 0.35 * self.limits.capacity_ah * math.sin(math.pi * (self.hour - 6.0) / 12.0)
-        load = 0.08 * self.limits.capacity_ah + self.rng.uniform(-1.5, 1.5)
+            solar = 0.25 * self.limits.capacity_ah * math.sin(math.pi * (self.hour - 6.0) / 12.0)
+        load = 0.05 * self.limits.capacity_ah * (1 + self.rng.uniform(-0.2, 0.2))
+        if self.scenario == "overload":
+            load += 1.3 * self.limits.capacity_ah
+        elif self.scenario == "deep_discharge":
+            load += 0.3 * self.limits.capacity_ah
         return solar - load
 
     def step(self, dt_s: float) -> None:
         self.hour = (self.hour + dt_s / 3600.0) % 24.0
-        current = self._demand_current()
-        # Charge taper near full, load cut-off near empty (as the inverter/charger would do).
-        if current > 0 and self.soc_pct >= 99.0:
-            current *= max(0.0, (100.0 - self.soc_pct))
-        if current < 0 and self.soc_pct <= 5.0:
-            current = 0.0
+        target = AMBIENT_C.get(self.scenario, 25.0)
+        self.ambient_c += (target - self.ambient_c) * min(1.0, dt_s / THERMAL_TIME_CONSTANT_S)
+        if self.scenario == "cell_drift":
+            self.cell_offsets[self.weak_cell] -= DRIFT_V_PER_HOUR * dt_s / 3600.0
+
+        demand = self._demand_current()
+        # Charge taper near full, inverter load cut-off near empty.
+        if demand > 0 and self.soc_pct >= 99.0:
+            demand *= max(0.0, (100.0 - self.soc_pct))
+        if demand < 0 and self.soc_pct <= 5.0 and self.scenario != "deep_discharge":
+            demand = 0.0
+        self.demand_a = demand
+
+        # The BMS switches stop current in a blocked direction.
+        current = demand
+        if self.errors & CHG_BLOCKING:
+            current = min(current, 0.0)
+        if self.errors & DIS_BLOCKING:
+            current = max(current, 0.0)
         self.current_a = current
         self.soc_pct += current * dt_s / 3600.0 / self.limits.capacity_ah * 100.0
         self.soc_pct = min(max(self.soc_pct, 0.0), 100.0)
 
     def cell_voltages(self) -> list[float]:
-        base = ocv(self.soc_pct) + self.current_a * self.cell_resistance_ohm
+        # The OCV table ends at 0 %; real cells collapse steeply below ~3 %.
+        knee = max(0.0, 3.0 - self.soc_pct) * 0.15
+        base = ocv(self.soc_pct) - knee + self.current_a * self.cell_resistance_ohm
         return [base + off + self.rng.gauss(0, 0.0005) for off in self.cell_offsets]
 
     def temperatures(self) -> tuple[list[float], float, float]:
@@ -130,37 +186,36 @@ class BatteryModel:
         mosfet_temp = self.ambient_c + 0.15 * heat + self.rng.gauss(0, 0.1)
         return cell_temps, ic_temp, mosfet_temp
 
-    def error_flags(self, cells: list[float], cell_temps: list[float], mosfet_temp: float) -> int:
+    def update_errors(self, cells: list[float], cell_temps: list[float], mosfet_temp: float) -> int:
+        """Set errors at the limits, clear them at the firmware's reset thresholds (hysteresis)."""
         lim = self.limits
-        errors = []
-        if max(cells) > lim.cell_ov:
-            errors.append("CELL_OVERVOLTAGE")
-        if min(cells) < lim.cell_uv:
-            errors.append("CELL_UNDERVOLTAGE")
-        if self.current_a > lim.chg_overcurrent:
-            errors.append("CHG_OVERCURRENT")
-        if -self.current_a > lim.dis_overcurrent:
-            errors.append("DIS_OVERCURRENT")
-        if max(cell_temps) > lim.dis_max_temp:
-            errors.append("DIS_OVERTEMP")
-        if min(cell_temps) < lim.dis_min_temp:
-            errors.append("DIS_UNDERTEMP")
-        if max(cell_temps) > lim.chg_max_temp:
-            errors.append("CHG_OVERTEMP")
-        if min(cell_temps) < lim.chg_min_temp:
-            errors.append("CHG_UNDERTEMP")
-        if mosfet_temp > 80.0:
-            errors.append("FET_OVERTEMP")
-        return contract.encode_error_flags(errors)
+        hot, cold = max(cell_temps), min(cell_temps)
+        rules = {
+            # name: (set condition, clear condition)
+            "CELL_OVERVOLTAGE": (max(cells) > lim.cell_ov, max(cells) < lim.cell_ov_reset),
+            "CELL_UNDERVOLTAGE": (min(cells) < lim.cell_uv, min(cells) > lim.cell_uv_reset),
+            # Over-current is judged on demand: the BMS retries and trips again while the overload lasts.
+            "CHG_OVERCURRENT": (self.demand_a > lim.chg_overcurrent, self.demand_a <= lim.chg_overcurrent),
+            "DIS_OVERCURRENT": (-self.demand_a > lim.dis_overcurrent, -self.demand_a <= lim.dis_overcurrent),
+            "DIS_OVERTEMP": (hot > lim.dis_max_temp, hot < lim.dis_max_temp - lim.temp_hyst),
+            "DIS_UNDERTEMP": (cold < lim.dis_min_temp, cold > lim.dis_min_temp + lim.temp_hyst),
+            "CHG_OVERTEMP": (hot > lim.chg_max_temp, hot < lim.chg_max_temp - lim.temp_hyst),
+            "CHG_UNDERTEMP": (cold < lim.chg_min_temp, cold > lim.chg_min_temp + lim.temp_hyst),
+            "FET_OVERTEMP": (mosfet_temp > 80.0, mosfet_temp < 80.0 - lim.temp_hyst),
+        }
+        for name, (set_now, clear_now) in rules.items():
+            if set_now:
+                self.errors.add(name)
+            elif clear_now:
+                self.errors.discard(name)
+        return contract.encode_error_flags([e for e in contract.ERROR_FLAGS if e in self.errors])
 
     @staticmethod
     def bms_state(flags: int) -> int:
         """Steady state of the firmware state machine for the given errors."""
         errors = set(contract.decode_error_flags(flags))
-        chg_ok = not errors & {"CELL_OVERVOLTAGE", "CHG_OVERCURRENT", "CHG_OVERTEMP", "CHG_UNDERTEMP"}
-        dis_ok = not errors & {
-            "CELL_UNDERVOLTAGE", "DIS_OVERCURRENT", "SHORT_CIRCUIT", "DIS_OVERTEMP", "DIS_UNDERTEMP",
-        }
+        chg_ok = not errors & CHG_BLOCKING
+        dis_ok = not errors & DIS_BLOCKING
         name = {(True, True): "NORMAL", (True, False): "CHG", (False, True): "DIS"}.get((chg_ok, dis_ok), "OFF")
         return contract.BMS_STATES.index(name)
 
@@ -178,7 +233,7 @@ class BatteryModel:
         """The ThingSet `Meas` group, rounded like the firmware does."""
         cells = self.cell_voltages()
         cell_temps, ic_temp, mosfet_temp = self.temperatures()
-        flags = self.error_flags(cells, cell_temps, mosfet_temp)
+        flags = self.update_errors(cells, cell_temps, mosfet_temp)
         pack_v = sum(cells)
         return {
             "rPackVoltage_V": round(pack_v, 2),
@@ -224,6 +279,29 @@ def build_info(model: BatteryModel, device_id: str) -> dict:
     }
 
 
+def scenario_topic(device_id: str) -> str:
+    """Simulator-only control topic, not part of the BMS contract. Publish a
+    scenario name to `<topic>/set`; the current one is retained on `<topic>`."""
+    return contract.topic(device_id, "sim/scenario")
+
+
+def scenario_discovery(device_id: str) -> tuple[str, dict]:
+    """A Home Assistant select entity on the BMS device to switch scenarios."""
+    node = ha_discovery.node_id(device_id)
+    payload = {
+        "dev": {"ids": [node]},
+        "o": {"name": "bms-gateway simulator", "sw": __version__, "url": ha_discovery.REPO_URL},
+        "cmps": {
+            "scenario": {
+                "p": "select", "uniq_id": f"{node}_sim_scenario", "name": "Simulator scenario",
+                "cmd_t": scenario_topic(device_id) + "/set", "stat_t": scenario_topic(device_id),
+                "options": list(SCENARIOS), "ent_cat": "config", "icon": "mdi:test-tube",
+            }
+        },
+    }
+    return f"{ha_discovery.DISCOVERY_PREFIX}/device/{node}_simulator/config", payload
+
+
 def _publish(client: mqtt.Client, kind: str, device_id: str, message: dict, qos: int, retain: bool) -> None:
     contract.validate(kind, message)
     client.publish(contract.topic(device_id, kind), json.dumps(message), qos=qos, retain=retain)
@@ -240,11 +318,16 @@ def main() -> None:
                         help="simulated seconds per real second, e.g. 60 to see a day pass in 24 min")
     parser.add_argument("--cells", type=int, default=int(os.getenv("SIM_CELLS", "16")))
     parser.add_argument("--capacity", type=float, default=float(os.getenv("SIM_CAPACITY_AH", "100")))
+    parser.add_argument("--scenario", choices=list(SCENARIOS), default=os.getenv("SIM_SCENARIO", "normal"),
+                        help="starting scenario; change it at runtime via MQTT (see README)")
     parser.add_argument("--seed", type=int, default=None)
     args = parser.parse_args()
 
     model = BatteryModel(cells=args.cells, limits=Limits(capacity_ah=args.capacity), seed=args.seed)
+    model.set_scenario(args.scenario)
+    model_lock = threading.Lock()
     status_topic = contract.topic(args.device_id, "status")
+    control_topic = scenario_topic(args.device_id)
 
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"sim-{args.device_id}")
     client.will_set(status_topic, "offline", qos=1, retain=True)
@@ -254,7 +337,22 @@ def main() -> None:
         print(f"Connected to {args.broker}:{args.port} ({reason_code})", flush=True)
         client.publish(status_topic, "online", qos=1, retain=True)
         _publish(client, "info", args.device_id, build_info(model, args.device_id), qos=1, retain=True)
+        client.publish(control_topic, model.scenario, qos=1, retain=True)
+        discovery_topic, discovery = scenario_discovery(args.device_id)
+        client.publish(discovery_topic, json.dumps(discovery), qos=1, retain=True)
+        client.subscribe(control_topic + "/set", qos=1)
         connected.set()
+
+    def on_message(client, userdata, msg):
+        name = msg.payload.decode().strip()
+        try:
+            with model_lock:
+                model.set_scenario(name)
+        except ValueError as exc:
+            print(exc, flush=True)
+            return
+        print(f"Scenario: {name} - {SCENARIOS[name]}", flush=True)
+        client.publish(control_topic, name, qos=1, retain=True)
 
     # Treat `docker stop` like Ctrl+C so the clean "offline" status still goes out.
     def on_sigterm(signum, frame):
@@ -263,6 +361,7 @@ def main() -> None:
     signal.signal(signal.SIGTERM, on_sigterm)
 
     client.on_connect = on_connect
+    client.on_message = on_message
     client.connect(args.broker, args.port, keepalive=30)
     client.loop_start()
     if not connected.wait(timeout=10):
@@ -272,17 +371,20 @@ def main() -> None:
     seq = 0
     try:
         while True:
-            model.step(args.interval * args.speed)
-            message = build_meas(model, args.device_id, seq)
-            _publish(client, "meas", args.device_id, message, qos=0, retain=False)
-            m = message["meas"]
-            print(
-                f"[{seq}] {model.hour:05.2f}h  {m['rPackVoltage_V']:.2f} V  {m['rPackCurrent_A']:+.2f} A  "
-                f"SoC {m['rSOC_pct']:.1f} %  {contract.BMS_STATES[m['rBmsState']]}  "
-                f"errors {contract.decode_error_flags(m['rErrorFlags']) or '-'}",
-                flush=True,
-            )
-            seq += 1
+            with model_lock:
+                model.step(args.interval * args.speed)
+                message = build_meas(model, args.device_id, seq)
+                silent = model.scenario == "silent"
+            if not silent:
+                _publish(client, "meas", args.device_id, message, qos=0, retain=False)
+                m = message["meas"]
+                print(
+                    f"[{seq}] {model.hour:05.2f}h  {m['rPackVoltage_V']:.2f} V  {m['rPackCurrent_A']:+.2f} A  "
+                    f"SoC {m['rSOC_pct']:.1f} %  {contract.BMS_STATES[m['rBmsState']]}  "
+                    f"errors {contract.decode_error_flags(m['rErrorFlags']) or '-'}",
+                    flush=True,
+                )
+                seq += 1
             time.sleep(args.interval)
     except KeyboardInterrupt:
         pass

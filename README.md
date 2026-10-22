@@ -75,6 +75,30 @@ broker). The simulator publishes `offline` before it exits; if it crashes
 instead, the broker publishes `offline` itself (MQTT Last Will), and the
 gateway turns that into a `device_offline` event.
 
+### Demo scenarios
+
+Pick a scenario from the **Simulator scenario** dropdown on the BMS device in
+Home Assistant, or publish one over MQTT:
+
+```bash
+docker compose exec mosquitto mosquitto_pub -t libre-solar/bms/bms-sim-01/sim/scenario/set -m overheat
+```
+
+| Scenario | What happens |
+|---|---|
+| `normal` | Healthy battery on a solar day. Also resets the other scenarios |
+| `overheat` | Enclosure heats to 52 °C: health **warning** near the limit first, then `CHG_OVERTEMP` + `DIS_OVERTEMP`, BMS `OFF`, current 0 A |
+| `cold` | Freezing night (−5 °C): `CHG_UNDERTEMP`, the BMS only allows discharging |
+| `cell_drift` | One cell drifts away: imbalance warning at 50 mV, critical at 100 mV (judged at 20–90 % SoC) |
+| `overload` | Load above 1C: `DIS_OVERCURRENT`, output switched off until the load goes away |
+| `deep_discharge` | Inverter cut-off fails: `CELL_UNDERVOLTAGE`, the BMS stops discharging until solar recharges the pack |
+| `silent` | BMS stops sending data but stays connected: after `STALE_AFTER_S` the health shows "No data from the BMS" |
+
+The simulator models what the firmware does: faults clear at the firmware's
+reset thresholds (hysteresis), and current really stops in a direction the BMS
+has switched off. The `sim/scenario` topics are for the simulator only and are
+not part of the BMS contract.
+
 ### Gateway configuration
 
 `python -m bms_gateway.gateway --help` lists every option. Each option can also
