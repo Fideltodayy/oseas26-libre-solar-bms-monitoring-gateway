@@ -12,8 +12,8 @@ jobs:
       matrix:
         python-version: ["3.10", "3.12"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
       - run: pip install -e '.[dev]'
@@ -22,10 +22,15 @@ jobs:
   docker:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Start broker and simulator
-        run: docker compose up --build -d
-      - name: Receive a meas message
+      - uses: actions/checkout@v7
+      - name: Start broker, simulator and gateway
+        # Home Assistant is left out to keep CI fast; discovery is covered by unit tests.
+        run: docker compose up --build -d mosquitto bms-simulator gateway
+      - name: Simulator publishes meas
         run: docker compose exec -T mosquitto mosquitto_sub -t 'libre-solar/bms/+/meas' -C 1 -W 30
+      - name: Gateway publishes summary and Home Assistant discovery
+        run: |
+          docker compose exec -T mosquitto mosquitto_sub -t 'libre-solar/bms/+/summary' -C 1 -W 30
+          docker compose exec -T mosquitto mosquitto_sub -t 'homeassistant/device/+/config' -C 1 -W 30
       - if: always()
         run: docker compose logs && docker compose down -v

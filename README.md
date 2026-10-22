@@ -24,14 +24,22 @@ tools operators and the community already use.
 The core of this repository is the **MQTT contract**
 ([`docs/mqtt-schema.md`](docs/mqtt-schema.md), [`schemas/v1/`](schemas/v1/)). It
 uses the Libre Solar firmware's own ThingSet field names, so a real BMS can
-publish it without a mapping layer. MicroPowerManager gets a 15-minute summary
-plus fault events. Home Assistant and Prospect get the full stream.
+publish it without a mapping layer. A small **gateway** service turns the live
+stream into what each platform needs.
+
+```text
+BMS / simulator ──meas, info, status──► Mosquitto ──► Home Assistant (auto-discovered, full stream)
+                                            │
+                                            └──► gateway ──summary, event──► MicroPowerManager, SMS alerts
+                                                    └─ HA discovery, health, faults, SoH, cycles
+```
 
 | Expected outcome | Status |
 |---|---|
 | BMS simulator | ✅ `bms_gateway/simulator.py`, using the firmware's LFP OCV curve and protection limits |
 | Documented MQTT schema | ✅ `docs/mqtt-schema.md` plus JSON Schemas and examples, validated in CI |
-| Home Assistant auto-discovery | 🚧 in progress |
+| Home Assistant auto-discovery | ✅ 34 entities per 16-cell BMS, appearing with no manual setup in the demo stack |
+| Health summary and fault events (for MPM) | ✅ `bms_gateway/gateway.py`, with operator messages and recommended actions |
 | MPM ingestion and battery-health view | 🚧 in progress |
 | Real transport path (ThingSet over serial) | 🚧 in progress |
 | Field-deployment documentation | 🚧 in progress |
@@ -42,16 +50,49 @@ Requires Docker. Works on x86 and ARM (including Apple Silicon and Raspberry Pi)
 
 ```bash
 docker compose up --build -d
+```
+
+Open Home Assistant at <http://localhost:8123> and log in as `admin` / `admin`
+(demo credentials, set with `HA_USERNAME` / `HA_PASSWORD`). The `ha-setup`
+container completes onboarding and adds the MQTT integration, so the
+**Libre Solar BMS bms-sim-01** device is already there under Settings → Devices.
+The first start takes a minute or two while Home Assistant initialises.
+
+To watch the raw MQTT traffic:
+
+```bash
 docker compose exec mosquitto mosquitto_sub -t 'libre-solar/bms/#' -v
 ```
 
-You should see `status`, `info` and then a `meas` message every 5 seconds. With
-`SIM_SPEED=60` (the compose default) a simulated day passes in 24 minutes, so
-you can watch the battery charge around noon and discharge at night.
+With `SIM_SPEED=60` (the compose default) a simulated day passes in 24
+minutes, so you can watch the battery charge around noon and discharge at
+night. The gateway publishes a `summary` every minute in the demo
+(`SUMMARY_INTERVAL_S`, 15 minutes in the field) and immediately when health or
+faults change.
 
-Stop with `docker compose down`. The simulator publishes `offline` before it
-exits; if it crashes instead, the broker publishes `offline` itself (MQTT Last
-Will).
+Stop with `docker compose down` (add `-v` to also reset Home Assistant and the
+broker). The simulator publishes `offline` before it exits; if it crashes
+instead, the broker publishes `offline` itself (MQTT Last Will), and the
+gateway turns that into a `device_offline` event.
+
+### Gateway configuration
+
+`python -m bms_gateway.gateway --help` lists every option. Each option can also
+be set with an environment variable:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `MQTT_HOST`, `MQTT_PORT` | `localhost`, `1883` | broker |
+| `MQTT_USERNAME`, `MQTT_PASSWORD` | none | broker credentials |
+| `SUMMARY_INTERVAL_S` | `900` | summary window for MPM |
+| `STALE_AFTER_S` | `120` | report a BMS as silent after this long without data |
+| `TIME_SCALE` | `1` | set equal to `SIM_SPEED` with the simulator; keep `1` for real hardware |
+| `HA_DISCOVERY` | `true` | publish Home Assistant discovery |
+
+The gateway finds batteries from their topics, so you don't configure anything
+per battery. It keeps no database: after a restart it reads its last retained
+`summary` back from the broker, so the cycle count survives and MPM is not sent
+duplicate fault events.
 
 ### Without Docker
 
@@ -60,18 +101,27 @@ Requires Python 3.10+ and an MQTT broker on `localhost:1883`.
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e '.[dev]'
-python -m bms_gateway.simulator --speed 60     # --help lists all options
-pytest                                         # contract and simulator tests
+python -m bms_gateway.simulator --speed 60 &
+python -m bms_gateway.gateway --time-scale 60
+pytest
 ```
 
 ### Repository layout
 
 ```text
-schemas/v1/          JSON Schemas (source of truth) and one valid example per message
-docs/mqtt-schema.md  The contract explained: topics, fields, units, error flags
-bms_gateway/         Python package: contract helpers and the simulator
-tests/               Contract and simulator tests (run in CI)
-infra/mosquitto/     Broker configuration
+schemas/v1/            JSON Schemas (source of truth) and one valid example per message
+docs/mqtt-schema.md    The contract explained: topics, fields, units, error flags
+bms_gateway/
+  contract.py          Topics, error flags, BMS states, schema validation
+  simulator.py         Simulated BMS
+  gateway.py           MQTT service: one DeviceMonitor per battery
+  monitor.py           summary/event logic (window, energy, cycles, faults)
+  health.py            Health rules (ok / warning / critical with reasons)
+  faults.py            Operator text and recommended action per firmware fault
+  ha_discovery.py      Home Assistant device discovery
+  ha_setup.py          Zero-click Home Assistant setup for the demo stack
+tests/                 Unit tests (run in CI)
+infra/mosquitto/       Broker configuration
 ```
 
 ## Abstract and goal

@@ -1,3 +1,12 @@
+# Demo stack: broker, simulated BMS, gateway and Home Assistant.
+#   docker compose up --build -d
+# Home Assistant: http://localhost:8123 (admin / admin, demo only).
+# For real hardware, stop bms-simulator and set SIM_SPEED=1 (see README).
+
+x-gateway-image: &gateway-image
+  build: .
+  image: bms-gateway:local
+
 services:
   mosquitto:
     image: eclipse-mosquitto:2.0.20
@@ -13,7 +22,8 @@ services:
     restart: unless-stopped
 
   bms-simulator:
-    build: .
+    <<: *gateway-image
+    command: ["python", "-m", "bms_gateway.simulator"]
     environment:
       MQTT_HOST: mosquitto
       DEVICE_ID: ${DEVICE_ID:-bms-sim-01}
@@ -24,5 +34,45 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  gateway:
+    <<: *gateway-image
+    command: ["python", "-m", "bms_gateway.gateway"]
+    environment:
+      MQTT_HOST: mosquitto
+      # 15 min in the field; 1 min in the demo so summaries show up quickly.
+      SUMMARY_INTERVAL_S: ${SUMMARY_INTERVAL_S:-60}
+      # Must equal SIM_SPEED so energy and cycle counts match the simulated time. 1 for real hardware.
+      TIME_SCALE: ${SIM_SPEED:-60}
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+    restart: unless-stopped
+
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:2026.9.3
+    ports:
+      - "${HA_PORT:-8123}:8123"
+    volumes:
+      - ha-config:/config
+    environment:
+      TZ: ${TZ:-Africa/Kigali}
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+    restart: unless-stopped
+
+  ha-setup:
+    <<: *gateway-image
+    command: ["python", "-m", "bms_gateway.ha_setup"]
+    environment:
+      HA_URL: http://homeassistant:8123
+      HA_USERNAME: ${HA_USERNAME:-admin}
+      HA_PASSWORD: ${HA_PASSWORD:-admin}
+      MQTT_HOST: mosquitto
+    depends_on:
+      - homeassistant
+    restart: "no"
+
 volumes:
   mosquitto-data:
+  ha-config:

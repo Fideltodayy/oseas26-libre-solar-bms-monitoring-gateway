@@ -34,9 +34,6 @@ All topics start with `libre-solar/bms/{device_id}/`. `device_id` matches
 | `summary` | gateway | every 15 min, **and immediately** when health or active faults change | 1 | yes | [`summary.schema.json`](../schemas/v1/summary.schema.json) | MicroPowerManager |
 | `event` | gateway | on change only | 1 | no | [`event.schema.json`](../schemas/v1/event.schema.json) | MicroPowerManager, SMS alerts |
 
-The simulator publishes `status`, `info` and `meas` today. The gateway service
-that produces `summary` and `event` is being built against these schemas.
-
 Because `status`, `info` and `summary` are retained, a consumer that starts
 late (or restarts) sees the current state immediately without waiting for the
 next cycle.
@@ -207,6 +204,27 @@ or comes back online. `event_id` is a UUID so consumers can drop duplicates
 
 `type` is one of `fault_raised`, `fault_cleared`, `device_online` or
 `device_offline`. For `device_*` events `fault` is `null`.
+
+## Home Assistant discovery
+
+The gateway publishes one retained
+[device discovery](https://www.home-assistant.io/integrations/mqtt/#device-discovery-payload)
+message per BMS on `homeassistant/device/libre_solar_bms_<device_id>/config`,
+once it has seen both `info` and `meas`. The payload is rebuilt when the
+cell count or the set of optional fields changes, and resent when Home
+Assistant announces `online` on `homeassistant/status`.
+
+All entities belong to one device, named after `cManufacturer`, `cDeviceType`
+and `cFirmwareVersion`. They use `libre-solar/bms/<id>/status` for
+availability, so they show as unavailable when the BMS goes offline.
+
+| From `meas` (live) | From `summary` (gateway) |
+|---|---|
+| State of charge, pack voltage, current, power | Health (`ok`/`warning`/`critical`, reasons as attribute) |
+| Lowest/highest cell voltage, cell imbalance | Health reasons, active faults |
+| Battery temperatures, MOSFET and BMS IC temperature | Estimated state of health, equivalent full cycles |
+| BMS state, problem (binary sensor) | |
+| Per-cell voltages (diagnostic) | |
 
 ## Validating messages
 
