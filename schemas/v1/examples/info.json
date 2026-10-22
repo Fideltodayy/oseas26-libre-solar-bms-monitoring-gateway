@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "device_id": "bms-sim-01",
+  "ts": "2026-10-22T06:00:00Z",
+  "source": "simulator",
+  "device": {
+    "cManufacturer": "Libre Solar",
+    "cDeviceType": "BMS C1 (simulated)",
+    "cHardwareVersion": "v0.4",
+    "cFirmwareVersion": "bms-gateway-sim 0.1.0"
+  },
+  "conf": {
+    "sNominalCapacity_Ah": 100.0,
+    "sShortCircuitLimit_A": 200.0,
+    "sDisOvercurrent_A": 100.0,
+    "sChgOvercurrent_A": 100.0,
+    "sDisMaxTemp_degC": 45.0,
+    "sDisMinTemp_degC": -20.0,
+    "sChgMaxTemp_degC": 45.0,
+    "sChgMinTemp_degC": 0.0,
+    "sTempLimitHysteresis_degC": 5.0,
+    "sCellOvervoltage_V": 3.8,
+    "sCellOvervoltageReset_V": 3.4,
+    "sCellUndervoltage_V": 2.5,
+    "sCellUndervoltageReset_V": 3.1,
+    "sBalTargetVoltageDiff_V": 0.01,
+    "sBalMinVoltage_V": 3.3
+  }
+}

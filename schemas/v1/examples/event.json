@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "device_id": "bms-sim-01",
+  "ts": "2026-10-22T13:42:10Z",
+  "event_id": "5f0c1c3e-8b8e-4d55-9a57-2f1e6a3d7c42",
+  "type": "fault_raised",
+  "fault": "CHG_OVERTEMP",
+  "severity": "critical",
+  "message": "Battery too hot to charge (46.2 °C). Charging stopped by the BMS.",
+  "recommended_action": "Check ventilation and shade the battery enclosure. Charging resumes automatically below 40 °C."
+}

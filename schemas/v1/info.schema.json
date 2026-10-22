@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/EnAccess/oseas26-libre-solar-bms-monitoring-gateway/schemas/v1/info.schema.json",
+  "title": "BMS device info and protection limits",
+  "description": "Published retained on libre-solar/bms/{device_id}/info on every (re)connect. `device` and `conf` carry the ThingSet `Device` and `Conf` groups unchanged.",
+  "type": "object",
+  "required": ["schema_version", "device_id", "ts", "source", "device", "conf"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "device_id": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,64}$" },
+    "ts": { "type": "string", "format": "date-time" },
+    "source": {
+      "description": "Where the data comes from, so no consumer mistakes simulated data for a real battery.",
+      "enum": ["simulator", "serial", "firmware"]
+    },
+    "device": {
+      "type": "object",
+      "required": ["cManufacturer", "cDeviceType", "cFirmwareVersion"],
+      "properties": {
+        "cManufacturer": { "type": "string" },
+        "cDeviceType": { "type": "string" },
+        "cHardwareVersion": { "type": "string" },
+        "cFirmwareVersion": { "type": "string" }
+      }
+    },
+    "conf": {
+      "type": "object",
+      "required": [
+        "sNominalCapacity_Ah",
+        "sCellOvervoltage_V",
+        "sCellUndervoltage_V",
+        "sDisMaxTemp_degC",
+        "sChgMaxTemp_degC"
+      ],
+      "properties": {
+        "sNominalCapacity_Ah": { "type": "number", "exclusiveMinimum": 0 },
+        "sShortCircuitLimit_A": { "type": "number" },
+        "sDisOvercurrent_A": { "type": "number" },
+        "sChgOvercurrent_A": { "type": "number" },
+        "sDisMaxTemp_degC": { "type": "number" },
+        "sDisMinTemp_degC": { "type": "number" },
+        "sChgMaxTemp_degC": { "type": "number" },
+        "sChgMinTemp_degC": { "type": "number" },
+        "sTempLimitHysteresis_degC": { "type": "number" },
+        "sCellOvervoltage_V": { "type": "number" },
+        "sCellOvervoltageReset_V": { "type": "number" },
+        "sCellUndervoltage_V": { "type": "number" },
+        "sCellUndervoltageReset_V": { "type": "number" },
+        "sBalTargetVoltageDiff_V": { "type": "number" },
+        "sBalMinVoltage_V": { "type": "number" }
+      }
+    }
+  }
+}

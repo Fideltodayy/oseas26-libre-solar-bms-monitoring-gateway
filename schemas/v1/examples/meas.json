@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "device_id": "bms-sim-01",
+  "ts": "2026-10-22T12:00:05Z",
+  "seq": 1284,
+  "meas": {
+    "rPackVoltage_V": 53.25,
+    "rStackVoltage_V": 53.25,
+    "rPackCurrent_A": 26.77,
+    "rCellTemps_degC": [26.6, 26.8],
+    "rICTemp_degC": 28.9,
+    "rMOSFETTemp_degC": 29.1,
+    "rSOC_pct": 88.8,
+    "rErrorFlags": 0,
+    "rBmsState": 3,
+    "rCellVoltages_V": [3.328, 3.32, 3.332, 3.327, 3.33, 3.329, 3.327, 3.331, 3.327, 3.329, 3.326, 3.327, 3.329, 3.333, 3.327, 3.328],
+    "rCellAvgVoltage_V": 3.328,
+    "rCellMinVoltage_V": 3.32,
+    "rCellMaxVoltage_V": 3.333,
+    "rBalancingStatus": 8340
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "device_id": "bms-sim-01",
+  "ts": "2026-10-22T12:00:05Z",
+  "window_s": 900,
+  "last_seen": "2026-10-22T12:00:05Z",
+  "bms_state": "NORMAL",
+  "soc_pct": 88.8,
+  "min_soc_pct": 84.1,
+  "pack_voltage_v": 53.25,
+  "cell_imbalance_mv": 14,
+  "max_temp_c": 29.4,
+  "energy_charged_wh": 1180.5,
+  "energy_discharged_wh": 0.0,
+  "equivalent_cycles": 142.6,
+  "soh_pct": 97.1,
+  "soh_method": "cycle_model",
+  "active_faults": [],
+  "health": { "status": "ok", "reasons": [] }
+}

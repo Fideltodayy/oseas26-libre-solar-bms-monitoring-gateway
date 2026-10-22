@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/EnAccess/oseas26-libre-solar-bms-monitoring-gateway/schemas/v1/event.schema.json",
+  "title": "BMS event (fault raised/cleared, online/offline)",
+  "description": "Published on libre-solar/bms/{device_id}/event by the gateway when something changes. QoS 1, not retained. `event_id` is unique so consumers can drop duplicate deliveries.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "device_id",
+    "ts",
+    "event_id",
+    "type",
+    "fault",
+    "severity",
+    "message",
+    "recommended_action"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "device_id": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,64}$" },
+    "ts": { "type": "string", "format": "date-time" },
+    "event_id": { "type": "string", "format": "uuid" },
+    "type": { "enum": ["fault_raised", "fault_cleared", "device_online", "device_offline"] },
+    "fault": {
+      "description": "Fault name for fault_* events, null for device_* events.",
+      "oneOf": [{ "$ref": "#/$defs/fault" }, { "type": "null" }]
+    },
+    "severity": { "enum": ["info", "warning", "critical"] },
+    "message": {
+      "description": "Plain-language description for operators (short enough for SMS).",
+      "type": "string",
+      "maxLength": 160
+    },
+    "recommended_action": { "type": "string" }
+  },
+  "$defs": {
+    "fault": {
+      "description": "BMS_ERR_* names from include/bms/bms_common.h without the prefix.",
+      "enum": [
+        "CELL_UNDERVOLTAGE",
+        "CELL_OVERVOLTAGE",
+        "SHORT_CIRCUIT",
+        "DIS_OVERCURRENT",
+        "CHG_OVERCURRENT",
+        "OPEN_WIRE",
+        "DIS_UNDERTEMP",
+        "DIS_OVERTEMP",
+        "CHG_UNDERTEMP",
+        "CHG_OVERTEMP",
+        "INT_OVERTEMP",
+        "CELL_FAILURE",
+        "DIS_OFF",
+        "CHG_OFF",
+        "FET_OVERTEMP"
+      ]
+    }
+  }
+}

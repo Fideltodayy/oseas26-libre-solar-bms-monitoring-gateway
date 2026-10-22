@@ -1,0 +1,28 @@
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2.0.20
+    ports:
+      - "${MQTT_PORT:-1883}:1883"
+    volumes:
+      - ./infra/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto-data:/mosquitto/data
+    healthcheck:
+      test: ["CMD", "mosquitto_sub", "-t", "$$SYS/broker/uptime", "-C", "1", "-W", "3"]
+      interval: 5s
+      retries: 10
+    restart: unless-stopped
+
+  bms-simulator:
+    build: .
+    environment:
+      MQTT_HOST: mosquitto
+      DEVICE_ID: ${DEVICE_ID:-bms-sim-01}
+      PUBLISH_INTERVAL_S: ${PUBLISH_INTERVAL_S:-5}
+      SIM_SPEED: ${SIM_SPEED:-60}
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  mosquitto-data:

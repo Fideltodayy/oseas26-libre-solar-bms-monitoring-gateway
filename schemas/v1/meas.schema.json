@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/EnAccess/oseas26-libre-solar-bms-monitoring-gateway/schemas/v1/meas.schema.json",
+  "title": "BMS live measurements",
+  "description": "Published on libre-solar/bms/{device_id}/meas. The `meas` object carries the ThingSet `Meas` group of LibreSolar/bms-firmware (app/src/data_objects.c) with names and units unchanged, so firmware or relays can publish it without a mapping layer.",
+  "type": "object",
+  "required": ["schema_version", "device_id", "ts", "seq", "meas"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "device_id": { "$ref": "#/$defs/device_id" },
+    "ts": {
+      "description": "Measurement time, ISO 8601 UTC.",
+      "type": "string",
+      "format": "date-time"
+    },
+    "seq": {
+      "description": "Monotonic message counter, resets on publisher restart. Lets consumers detect gaps.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "meas": {
+      "type": "object",
+      "required": [
+        "rPackVoltage_V",
+        "rCellTemps_degC",
+        "rICTemp_degC",
+        "rSOC_pct",
+        "rErrorFlags",
+        "rBmsState",
+        "rCellVoltages_V",
+        "rCellAvgVoltage_V",
+        "rCellMinVoltage_V",
+        "rCellMaxVoltage_V",
+        "rBalancingStatus"
+      ],
+      "properties": {
+        "rPackVoltage_V": { "type": "number", "minimum": 0 },
+        "rStackVoltage_V": {
+          "description": "Only on boards with CONFIG_BMS_IC_SWITCHES.",
+          "type": "number",
+          "minimum": 0
+        },
+        "rPackCurrent_A": {
+          "description": "Positive = charging, negative = discharging. Only on boards with CONFIG_BMS_IC_SWITCHES.",
+          "type": "number"
+        },
+        "rCellTemps_degC": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 1
+        },
+        "rICTemp_degC": { "type": "number" },
+        "rMOSFETTemp_degC": {
+          "description": "Only on boards with CONFIG_BMS_IC_SWITCHES.",
+          "type": "number"
+        },
+        "rShuntTemp_degC": {
+          "description": "Only on boards with CONFIG_BMS_IC_SHUNT_TEMP.",
+          "type": "number"
+        },
+        "rSOC_pct": { "type": "number", "minimum": 0, "maximum": 100 },
+        "rErrorFlags": {
+          "description": "Bitmask of BMS_ERR_* (include/bms/bms_common.h). See docs/mqtt-schema.md for bit names.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 32767
+        },
+        "rBmsState": {
+          "description": "enum bms_state: 0 OFF, 1 CHG, 2 DIS, 3 NORMAL, 4 SHUTDOWN.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "rCellVoltages_V": {
+          "type": "array",
+          "items": { "type": "number", "minimum": 0 },
+          "minItems": 1,
+          "maxItems": 32
+        },
+        "rCellAvgVoltage_V": { "type": "number", "minimum": 0 },
+        "rCellMinVoltage_V": { "type": "number", "minimum": 0 },
+        "rCellMaxVoltage_V": { "type": "number", "minimum": 0 },
+        "rBalancingStatus": {
+          "description": "Bit n set = cell n is being balanced.",
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  },
+  "$defs": {
+    "device_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{1,64}$"
+    }
+  }
+}

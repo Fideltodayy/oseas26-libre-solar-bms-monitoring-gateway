@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/EnAccess/oseas26-libre-solar-bms-monitoring-gateway/schemas/v1/summary.schema.json",
+  "title": "BMS health summary (low frequency, for MPM)",
+  "description": "Published retained on libre-solar/bms/{device_id}/summary by the gateway, once per window (default 15 min) and immediately when health or active faults change. Values are derived from `meas` over the window: these are the numbers an operator acts on, not a timeseries.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "device_id",
+    "ts",
+    "window_s",
+    "last_seen",
+    "bms_state",
+    "soc_pct",
+    "min_soc_pct",
+    "pack_voltage_v",
+    "cell_imbalance_mv",
+    "max_temp_c",
+    "energy_charged_wh",
+    "energy_discharged_wh",
+    "equivalent_cycles",
+    "soh_pct",
+    "active_faults",
+    "health"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "device_id": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,64}$" },
+    "ts": { "type": "string", "format": "date-time" },
+    "window_s": {
+      "description": "Length of the aggregation window in seconds.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "last_seen": {
+      "description": "Timestamp of the newest `meas` in the window.",
+      "type": "string",
+      "format": "date-time"
+    },
+    "bms_state": { "enum": ["OFF", "CHG", "DIS", "NORMAL", "SHUTDOWN"] },
+    "soc_pct": { "type": "number", "minimum": 0, "maximum": 100 },
+    "min_soc_pct": {
+      "description": "Lowest SoC in the window. Repeatedly low values point to an undersized system.",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "pack_voltage_v": { "type": "number", "minimum": 0 },
+    "cell_imbalance_mv": {
+      "description": "Largest max-minus-min cell voltage seen in the window.",
+      "type": "number",
+      "minimum": 0
+    },
+    "max_temp_c": {
+      "description": "Highest of all cell, IC and MOSFET temperatures in the window.",
+      "type": "number"
+    },
+    "energy_charged_wh": { "type": "number", "minimum": 0 },
+    "energy_discharged_wh": { "type": "number", "minimum": 0 },
+    "equivalent_cycles": {
+      "description": "Lifetime full-cycle equivalents counted by the gateway: discharged Ah / nominal capacity.",
+      "type": "number",
+      "minimum": 0
+    },
+    "soh_pct": {
+      "description": "Estimated state of health. The firmware does not report SoH; null until an estimate is available.",
+      "type": ["number", "null"],
+      "minimum": 0,
+      "maximum": 100
+    },
+    "soh_method": {
+      "description": "How soh_pct was obtained, e.g. `cycle_model`.",
+      "type": "string"
+    },
+    "active_faults": {
+      "type": "array",
+      "items": { "$ref": "event.schema.json#/$defs/fault" },
+      "uniqueItems": true
+    },
+    "health": {
+      "type": "object",
+      "required": ["status", "reasons"],
+      "properties": {
+        "status": { "enum": ["ok", "warning", "critical"] },
+        "reasons": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}
