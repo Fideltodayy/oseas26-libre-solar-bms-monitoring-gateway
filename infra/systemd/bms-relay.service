@@ -1,0 +1,22 @@
+# Runs the relay on a Linux box next to the BMS (e.g. a Raspberry Pi).
+#   sudo cp infra/systemd/bms-relay.service /etc/systemd/system/
+#   sudo systemctl edit bms-relay   # set DEVICE_ID, RELAY_SOURCE, MQTT_HOST
+#   sudo systemctl enable --now bms-relay
+[Unit]
+Description=Libre Solar BMS relay (ThingSet serial -> MQTT)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Environment=DEVICE_ID=bms-01
+Environment=RELAY_SOURCE=serial:/dev/ttyUSB0
+Environment=MQTT_HOST=localhost
+ExecStart=/opt/bms-gateway/.venv/bin/python -m bms_gateway.relay
+WorkingDirectory=/opt/bms-gateway
+User=bms
+Group=dialout
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

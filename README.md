@@ -28,7 +28,8 @@ publish it without a mapping layer. A small **gateway** service turns the live
 stream into what each platform needs.
 
 ```text
-BMS / simulator ──meas, info, status──► Mosquitto ──► Home Assistant (auto-discovered, full stream)
+BMS ─UART/ThingSet─► relay ─┐
+                simulator ──┴─meas, info, status──► Mosquitto ──► Home Assistant (auto-discovered, full stream)
                                             │
                                             └──► gateway ──summary, event──► MicroPowerManager, SMS alerts
                                                     └─ HA discovery, health, faults, SoH, cycles
@@ -41,7 +42,7 @@ BMS / simulator ──meas, info, status──► Mosquitto ──► Home Assis
 | Home Assistant auto-discovery | ✅ 34 entities per 16-cell BMS, appearing with no manual setup in the demo stack |
 | Health summary and fault events (for MPM) | ✅ `bms_gateway/gateway.py`, with operator messages and recommended actions |
 | MPM ingestion and battery-health view | 🚧 in progress |
-| Real transport path (ThingSet over serial) | 🚧 in progress |
+| Real transport path (ThingSet over serial) | ✅ `bms_gateway/relay.py` for the BMS C1 UART or USB, tested end to end against a ThingSet emulator. 🔜 to be proven on the shared BMS at the event ([guide](docs/hardware.md)) |
 | Field-deployment documentation | 🚧 in progress |
 
 ### Quick start
@@ -99,6 +100,19 @@ reset thresholds (hysteresis), and current really stops in a direction the BMS
 has switched off. The `sim/scenario` topics are for the simulator only and are
 not part of the BMS contract.
 
+### Real hardware
+
+See [docs/hardware.md](docs/hardware.md). In short, run the relay next to the
+BMS and point it at the broker:
+
+```bash
+python -m bms_gateway.relay --source serial:/dev/ttyUSB0 --device-id site-01 --broker <broker>
+```
+
+To try the hardware path without a board, `docker compose --profile thingset up --build -d`
+adds a second battery that goes through an emulated UART, ThingSet with CRCs
+and the relay.
+
 ### Gateway configuration
 
 `python -m bms_gateway.gateway --help` lists every option. Each option can also
@@ -144,8 +158,12 @@ bms_gateway/
   faults.py            Operator text and recommended action per firmware fault
   ha_discovery.py      Home Assistant device discovery
   ha_setup.py          Zero-click Home Assistant setup for the demo stack
-tests/                 Unit tests (run in CI)
-infra/mosquitto/       Broker configuration
+  relay.py             Real BMS: ThingSet over serial/TCP/file -> MQTT
+  thingset.py          ThingSet text-mode parser and encoder (with CRC)
+  thingset_emulator.py BMS UART stand-in over TCP, for testing the relay path
+tests/                 Unit and end-to-end tests (run in CI)
+docs/hardware.md       Connecting a real BMS C1 (UART or USB), running the relay as a service
+infra/                 Broker configuration, systemd unit for the relay
 ```
 
 ## Abstract and goal

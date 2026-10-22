@@ -48,6 +48,32 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # Real-hardware path without hardware: `docker compose --profile thingset up -d`
+  # adds a second battery that goes BMS UART (emulated) -> ThingSet -> relay -> MQTT.
+  thingset-emulator:
+    <<: *gateway-image
+    command: ["python", "-m", "bms_gateway.thingset_emulator"]
+    environment:
+      SIM_SPEED: ${SIM_SPEED:-60}
+      THINGSET_CRC: "true"
+    profiles: [thingset]
+    restart: unless-stopped
+
+  relay:
+    <<: *gateway-image
+    command: ["python", "-m", "bms_gateway.relay"]
+    environment:
+      MQTT_HOST: mosquitto
+      DEVICE_ID: ${RELAY_DEVICE_ID:-bms-ts-01}
+      # For a real BMS: serial:/dev/ttyUSB0 (plus a `devices:` entry), and SOURCE_KIND=serial.
+      RELAY_SOURCE: ${RELAY_SOURCE:-tcp://thingset-emulator:3333}
+      SOURCE_KIND: ${SOURCE_KIND:-simulator}
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+    profiles: [thingset]
+    restart: unless-stopped
+
   homeassistant:
     image: ghcr.io/home-assistant/home-assistant:2026.9.3
     ports:
